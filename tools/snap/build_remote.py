@@ -123,25 +123,47 @@ def _build_snap(
 
             # This output may change, and is set by
             # https://github.com/canonical/snapcraft/blob/8ab7fd0c8a1d3f13045bec41a6e0158c063faa9b/snapcraft/commands/remote.py#L278
-            failed_archs = [arch for arch in archs if status[target][arch] != 'Succeeded']
+            failed_archs: set = set([arch for arch in archs if status[target][arch] != 'Succeeded'])
+
             # If the command failed or any architecture wasn't built
             # successfully, let's try to print all the output about the problem
             # that we can.
-            dump_output = exit_code != 0 or failed_archs
-            if exit_code == 0 and not failed_archs:
-                # We expect to have all target snaps available, or something bad happened.
+            dump_output: bool = exit_code != 0 or bool(failed_archs)
+
+            # Check snap list length
+            # We expect to have all target snaps available, or something bad happened.
+            if not dump_output:
                 snaps_list = glob.glob(join(workspace, '*.snap'))
                 if not len(snaps_list) == len(archs):
                     print('Some of the expected snaps for a successful build are missing '
                           f'(current list: {snaps_list}).')
                     dump_output = True
-                else:
-                    build_success = True
-                    break
-            if dump_output:
-                print(f'Dumping snapcraft remote-build output build for {target}:')
-                print('\n'.join(process_output))
-                _dump_failed_build_logs(target, archs, status, workspace)
+
+            # Check if the snap file just contains html
+            if not dump_output:
+                for arch in archs:
+                    snap_path_list = glob.glob(join(workspace, f'{target}_*_{arch}.snap'))
+                    assert len(snap_path_list) == 1
+                    with open(snap_path_list[0], 'r') as f:
+                        try:
+                            first_line = f.readline().rstrip()
+                        except UnicodeDecodeError:
+                            first_line = ''
+                        if first_line == "<!DOCTYPE html>":
+                            failed_archs.add(arch)
+                            print(f'The {target} {arch} snap file contains html instead of a snap')
+                dump_output = bool(failed_archs)
+
+            if not dump_output:
+                build_success = True
+                break
+
+            print(f'Dumping snapcraft remote-build output build for {target}:')
+            print('\n'.join(process_output))
+
+            assert len(process_output) >= 1
+            log_location = _extract_log_location(process_output[-1])
+            _dump_failed_build_logs(target, log_location)
 
         # Retry the remote build if it has been interrupted (non zero status code)
         # or if some builds have failed.
@@ -150,6 +172,18 @@ def _build_snap(
     running[target] = False
 
     return build_success
+
+
+def _extract_log_location(line: str) -> str:
+    result = ""
+    pattern = r"^Full execution log: '(.+)'$"
+    match = re.match(pattern, line)
+
+    if match:
+        result = match.group(1)
+    else:
+        print(f'warning: unable to extract log location, expected pattern "{pattern}", got "{line}"')
+    return result
 
 
 def _extract_state(project: str, output: str, status: Dict[str, Dict[str, str]]) -> None:
@@ -194,31 +228,18 @@ def _dump_status(
         time.sleep(10)
 
 
-def _dump_failed_build_logs(
-        target: str, archs: Set[str], status: Dict[str, Dict[str, str]],
-        workspace: str) -> None:
-    logs_list = glob.glob(join(workspace, f'snapcraft-{target}-*.txt'))
-    for arch in archs:
-        result = status[target][arch]
+def _dump_failed_build_logs(target:str, build_output_path: str) -> None:
+    if not build_output_path:
+        build_output = 'Log location not extracted from output.'
+    else:
+        with open(build_output_path) as file_h:
+            build_output = file_h.read()
 
-        if result != 'Succeeded':
-            failures = True
-
-            # log name is no longer set deterministically as target_arch.txt
-            # this will still result in a single output though, as we're filtering
-            # by target above and arch here
-            build_output_path = [log_name for log_name in logs_list if arch in log_name]
-            if not build_output_path:
-                build_output = 'No output has been dumped by snapcraft remote-build.'
-            else:
-                with open(build_output_path[0]) as file_h:
-                    build_output = file_h.read()
-
-            print(f'Output for failed build target={target} arch={arch}')
-            print('-------------------------------------------')
-            print(build_output)
-            print('-------------------------------------------')
-            print()
+    print(f'Output for failed build target={target}')
+    print('-------------------------------------------')
+    print(build_output)
+    print('-------------------------------------------')
+    print()
 
 
 def _dump_results(archs: Set[str], status: Dict[str, Dict[str, str]]) -> None:
@@ -282,7 +303,6 @@ def main():
                         workspace = CERTBOT_DIR
                     else:
                         workspace = join(CERTBOT_DIR, target)
-                    _dump_failed_build_logs(target, archs, status, workspace)
                 raise ValueError(f"Timeout out reached ({args.timeout} seconds) during the build!")
 
             build_success = True
