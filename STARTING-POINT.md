@@ -7,10 +7,10 @@ This repository is a **forward-only fork-anchor** of upstream from a chosen refe
 | Field | Value |
 |---|---|
 | Upstream | https://github.com/certbot/certbot |
-| Anchor reference | `v5.6.0` |
-| Upstream SHA | `03b5cf3cb035d1ff79f0fb008e7dacb4b40a579e` |
+| Anchor reference | `v5.7.0` |
+| Upstream SHA | `071382da6f8b5f123d46a7f44689cf4f08e9f652` |
 | Anchor commit on `main` | re-rooted as orphan (single-commit anchor) |
-| Reshape date | 2026-06-08 UTC |
+| Reshape date | 2026-07-13 UTC |
 
 ## Why an anchor, not full history
 
